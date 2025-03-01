@@ -66,6 +66,7 @@ fn main() {
 
 fn try_main() -> Result<()> {
     let args = Args::parse_args().context("could not parse arguments")?;
+    handlers::request::set_max_completion_items(args.max_item_num);
     initialize_config_file(args.config_file);
     initialize_log_file(args.log_file);
     setup_logging(args.log_level).context("failed to initialize logging")?;
