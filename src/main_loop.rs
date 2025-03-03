@@ -14,7 +14,7 @@ use crate::{
         jsonrpc::{self, Call},
         MethodCall,
     },
-    lsp_ext,
+    lsp_ext::{self, RustAnalyzerExpandMacro},
     msg::{self, Message, Response},
     registry::NotificationFromServer,
     syntax::{self},
@@ -507,6 +507,7 @@ impl Application {
             .on::<lsp_types::request::DocumentHighlightRequest, _, _>(
                 handlers::request::handle_document_highlight,
             )
+            .on::<RustAnalyzerExpandMacro, _, _>(handlers::request::handle_ra_expand_macro)
             .finish();
     }
 

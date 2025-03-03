@@ -431,7 +431,7 @@ impl Client {
         false
     }
 
-    async fn request<R: lsp::request::Request>(&self, params: R::Params) -> Result<R::Result>
+    pub async fn request<R: lsp::request::Request>(&self, params: R::Params) -> Result<R::Result>
     where
         R::Params: serde::Serialize,
         R::Result: core::fmt::Debug, // TODO temporary
@@ -843,12 +843,12 @@ impl Client {
     pub fn completion(
         &self,
         req_id: RequestId,
-        parmas: lsp::CompletionParams,
+        params: lsp::CompletionParams,
     ) -> Option<impl Future<Output = Result<Value>>> {
         let capabilities = self.capabilities.get().unwrap();
 
         capabilities.completion_provider.as_ref()?;
-        Some(self.call::<lsp::request::Completion>(req_id, parmas))
+        Some(self.call::<lsp::request::Completion>(req_id, params))
     }
 
     pub fn inline_completion(

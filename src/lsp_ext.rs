@@ -181,3 +181,18 @@ impl Request for RustAnalyzerReloadWorkspace {
     type Result = ();
     const METHOD: &'static str = "rust-analyzer/reloadWorkspace";
 }
+
+#[derive(Debug)]
+pub enum RustAnalyzerExpandMacro {}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExpandMacroResult {
+    pub name: String,
+    pub expansion: String,
+}
+
+impl Request for RustAnalyzerExpandMacro {
+    type Params = lsp_types::TextDocumentPositionParams;
+    type Result = ExpandMacroResult;
+    const METHOD: &'static str = "rust-analyzer/expandMacro";
+}

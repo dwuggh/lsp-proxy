@@ -2676,6 +2676,25 @@ if `lsp-proxy-inlay-hints-mode-config` allows it."
    :success-fn (lambda (resp)
                  (message "resp %s" resp))))
 
+(defvar lsp-proxy-rust-analyzer-expand-macro-buffer "*lsp-proxy-expandMacro*"
+  "Buffer for rust-analyzer/expandMacro.")
+
+(defun lsp-proxy-rust-analyzer-expand-macro ()
+  (interactive)
+  (lsp-proxy--async-request
+                'rust-analyzer/expandMacro
+                (lsp-proxy--request-or-notify-params (lsp-proxy--TextDocumentPosition))
+                :success-fn
+                (lambda (resp)
+                  (when-let* ((expansion (plist-get resp :expansion))
+                              (name (plist-get resp :name))
+                              (buf (get-buffer-create lsp-proxy-rust-analyzer-expand-macro-buffer)))
+                    (with-current-buffer buf
+                      (erase-buffer)
+                      (insert expansion)
+                      (rust-mode)
+                      (run-mode-hooks))
+                    (switch-to-buffer-other-window buf t)))))
 ;;
 ;; hooks
 ;;
