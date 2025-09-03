@@ -26,7 +26,7 @@ use crate::{
     msg::{self, Context, Message, RequestId, Response},
     syntax::LanguageServerFeature,
     utils::{
-        is_diagnostic_vectors_equal, lsp_symbols_to_imenu, sort_imenu_entries_grouped, truncate_completion_item
+        is_diagnostic_vectors_equal, lsp_symbols_to_imenu, truncate_completion_item
     },
 };
 
@@ -958,8 +958,8 @@ pub(crate) async fn handle_document_symbols(
     )
     .await
     .and_then(|(resp, _)| {
-        let mut result = lsp_symbols_to_imenu(resp);
-        let _ = sort_imenu_entries_grouped(&mut result);
+        let result = lsp_symbols_to_imenu(resp);
+        // let _ = sort_imenu_entries_grouped(&mut result);
         Ok(Response::new_ok(req.id.clone(), result))
     })
 }

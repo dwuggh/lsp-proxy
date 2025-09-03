@@ -2876,6 +2876,138 @@ if `lsp-proxy-inlay-hints-mode-config` allows it."
     (remove-overlays nil nil 'lsp-proxy--inlay-hint t))))
 
 ;; imenu
+
+(defcustom lsp-proxy-imenu-symbol-kinds
+  '((1 . "Files")
+    (2 . "Modules")
+    (3 . "Namespaces")
+    (4 . "Packages")
+    (5 . "Classes")
+    (6 . "Methods")
+    (7 . "Properties")
+    (8 . "Fields")
+    (9 . "Constructors")
+    (10 . "Enums")
+    (11 . "Interfaces")
+    (12 . "Functions")
+    (13 . "Variables")
+    (14 . "Constants")
+    (15 . "Strings")
+    (16 . "Numbers")
+    (17 . "Booleans")
+    (18 . "Arrays")
+    (19 . "Objects")
+    (20 . "Keys")
+    (21 . "Nulls")
+    (22 . "Enum Members")
+    (23 . "Structs")
+    (24 . "Events")
+    (25 . "Operators")
+    (26 . "Type Parameters"))
+  "`lsp-proxy-symbol-kinds', but only used by `imenu'.
+A new variable is needed, as it is `imenu' convention to use
+pluralized categories, which `lsp-proxy-symbol-kinds' doesn't. If the
+non-pluralized names are preferred, this can be set to
+`lsp-proxy-symbol-kinds'.
+Borrowed from `lsp-symbol-kinds'"
+  :type '(alist :key-type integer :value-type string))
+
+(defun lsp-proxy--imenu-kind-to-name (kind)
+  (alist-get kind lsp-proxy-imenu-symbol-kinds "?"))
+
+(defcustom lsp-proxy-imenu-index-symbol-kinds nil
+  "Which symbol kinds to show in imenu."
+  :type '(repeat (choice (const :tag "Miscellaneous" nil)
+                         (const :tag "File" File)
+                         (const :tag "Module" Module)
+                         (const :tag "Namespace" Namespace)
+                         (const :tag "Package" Package)
+                         (const :tag "Class" Class)
+                         (const :tag "Method" Method)
+                         (const :tag "Property" Property)
+                         (const :tag "Field" Field)
+                         (const :tag "Constructor" Constructor)
+                         (const :tag "Enum" Enum)
+                         (const :tag "Interface" Interface)
+                         (const :tag "Function" Function)
+                         (const :tag "Variable" Variable)
+                         (const :tag "Constant" Constant)
+                         (const :tag "String" String)
+                         (const :tag "Number" Number)
+                         (const :tag "Boolean" Boolean)
+                         (const :tag "Array" Array)
+                         (const :tag "Object" Object)
+                         (const :tag "Key" Key)
+                         (const :tag "Null" Null)
+                         (const :tag "Enum Member" EnumMember)
+                         (const :tag "Struct" Struct)
+                         (const :tag "Event" Event)
+                         (const :tag "Operator" Operator)
+                         (const :tag "Type Parameter" TypeParameter)))
+  :group 'lsp-proxy-imenu)
+
+(defun lsp-proxy--imenu-filter-symbols (symbols)
+  "Filter out unsupported symbols from SYMBOLS."
+  (seq-remove #'lsp-proxy--symbol-ignore symbols))
+(defun lsp-proxy--imenu-symbol-ignore (symbol))
+
+(defun my-imenu--create-index-recursive (symbols)
+  "Recursively process SYMBOLS into a flat list of `(KIND . IMENU-ENTRY)`.
+
+For each symbol, this function generates an entry for the symbol
+itself. If the symbol has children, it recursively processes them,
+groups them by kind, and packages them into imenu submenus titled
+with the parent's name."
+  (mapcan
+   (-lambda (symbol)
+     (let* ((name (plist-get symbol :name))
+            (kind (plist-get symbol :kind))
+            (pos (plist-get symbol :position))
+            (children (plist-get symbol :children))
+            (imenu-entry (cons name (cons (aref pos 0) (aref pos 1)))))
+       (if (or (not children) (seq-empty-p children))
+           ;; Base case: No children, just return this symbol's entry.
+           (list (list kind imenu-entry))
+         ;; Recursive step: Symbol has children.
+         (let ((parent-name name))
+           (cons
+            ;; 1. The entry for the parent symbol itself.
+            (list kind imenu-entry)
+            ;; 2. Entries for all children, grouped into submenus.
+            (mapcar
+             (-lambda ((child-kind . child-items))
+               ;; `child-items` is a list of imenu entries, e.g., '(("m1" . p1) ("m2" . p2))
+               ;; Create a submenu entry: ("ParentName" ("m1" . p1) ("m2" . p2))
+               (list child-kind (cons parent-name child-items)))
+             ;; Process children:
+             ;; a) Recursively call to get a flat list of child entries.
+             ;; b) Group that flat list by kind.
+             (->> (my-imenu--create-index-recursive children)
+                  (-group-by #'car)
+                  (mapcar (-lambda ((k . items))
+                            ;; `items` is like '((6 (...)) (6 (...)))
+                            ;; Convert to '(6 . ((...) (...)))
+                            (cons k (mapcan #'cdr items)))))))))))
+   ;; The input `symbols` can be a vector or list.
+   (if (vectorp symbols) (seq-into symbols 'list) symbols)))
+
+(defun my-imenu-create-index (symbols)
+  "Create a categorized imenu index from a vector of plists SYMBOLS.
+
+The plist for each symbol has the form:
+  '(:name \"...\" :kind N :position POS :children [...])
+
+The function processes symbols hierarchically, creating nested
+submenus for children under their parent's name."
+  (when (and symbols (> (length symbols) 0))
+    (let ((flat-list (my-imenu--create-index-recursive symbols)))
+      (->> flat-list
+           ;; Group the final flat list by kind for top-level categories.
+           (-group-by #'car)
+           (mapcar (-lambda ((kind . items))
+                     (cons (lsp-proxy--imenu-kind-to-name kind)
+                           (mapcan #'cdr items))))))))
+
 (cl-defun lsp-proxy-imenu ()
   "Lsp-Proxy's `imenu-create-index-function'.
 Returns a list as described in docstring of `imenu--index-alist'."
@@ -2883,26 +3015,24 @@ Returns a list as described in docstring of `imenu--index-alist'."
     (cl-return-from lsp-proxy-imenu))
   (let* ((res (lsp-proxy--request 'textDocument/documentSymbol
                                   (lsp-proxy--request-or-notify-params (list :textDocument (eglot--TextDocumentIdentifier)))
-                                  :cancel-on-input non-essential))
-         ;; (head (and (cl-plusp (length res)) (elt res 0)))
-         )
-    ;; (when head
-    ;;   (eglot--dcase head
-    ;;     (((SymbolInformation)) (eglot--imenu-SymbolInformation res))
-    ;;     (((DocumentSymbol)) (eglot--imenu-DocumentSymbol res))))
-    (lsp-proxy--convert-imenu-format res)))
+                                  :cancel-on-input non-essential)))
+    ;; (lsp-proxy--convert-imenu-format res)
+    (my-imenu-create-index res)
+    ))
 
 (defun lsp-proxy--convert-imenu-format (symbols)
   "Convert custom parsed LSP-style SYMBOLS into imenu-compatible cons cell format."
   (mapcar
    (lambda (item)
-     (let* ((name (aref item 0))
-            (content (aref item 1))
-            (group (plist-get content :Group))
-            (pos (plist-get content :Position)))
+     (let* ((name (plist-get item :name))
+            (pos (plist-get item :position))
+            (kind (plist-get item :kind))
+            (kindname (lsp-proxy--imenu-kind-to-name kind))
+            (detail (plist-get item :detail))
+            (children (plist-get item :children)))
        (cond
-        (group
-         (cons name (lsp-proxy--convert-imenu-format group)))
+        (children
+         (cons name (lsp-proxy--convert-imenu-format children)))
         (pos
          (cons name (cons (aref pos 0) (aref pos 1))))
         (t

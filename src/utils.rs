@@ -444,9 +444,60 @@ pub fn defer<F: FnOnce()>(f: F) -> Deferred<F> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ImenuDetailedEntry {
+    /// The name of this symbol.
+    pub name: String,
+
+    /// The kind of this symbol.
+    pub kind: lsp_types::SymbolKind,
+    pub position: (u32, u32),
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub children: Option<Vec<ImenuDetailedEntry>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ImenuEntry {
     Group(Vec<(String, ImenuEntry)>),
     Position((u32, u32)), // (line, character)
+}
+impl From<&lsp_types::SymbolInformation> for ImenuDetailedEntry {
+    fn from(value: &lsp_types::SymbolInformation) -> Self {
+        let name = value.name.clone();
+        let range = value.location.range;
+        let position = (range.start.line, range.start.character);
+        Self {
+            name,
+            kind: value.kind,
+            position,
+            detail: None,
+            children: None,
+        }
+    }
+}
+
+impl From<&lsp_types::DocumentSymbol> for ImenuDetailedEntry {
+    fn from(value: &lsp_types::DocumentSymbol) -> Self {
+        let name = value.name.clone();
+        let range = value.range;
+        let position = (range.start.line, range.start.character);
+        let children: Option<Vec<ImenuDetailedEntry>> = if let Some(ref children) = value.children {
+            Some(children.iter().map(Self::from).collect())
+        } else {
+            None
+        };
+        let detail = value.detail.clone();
+        Self {
+            name,
+            kind: value.kind,
+            position,
+            detail,
+            children,
+        }
+    }
 }
 
 impl ImenuEntry {
@@ -465,7 +516,7 @@ impl ImenuEntry {
     }
 }
 
-pub fn lsp_symbols_to_imenu(response: Option<DocumentSymbolResponse>) -> Vec<(String, ImenuEntry)> {
+pub fn lsp_symbols_to_imenu(response: Option<DocumentSymbolResponse>) -> Vec<ImenuDetailedEntry> {
     response.map_or(Vec::new(), |symbols| match symbols {
         DocumentSymbolResponse::Flat(symbols) => flat_symbols_to_imenu(&symbols),
         DocumentSymbolResponse::Nested(symbols) => nested_symbols_to_imenu(&symbols),
@@ -473,108 +524,74 @@ pub fn lsp_symbols_to_imenu(response: Option<DocumentSymbolResponse>) -> Vec<(St
 }
 
 // Process Nested DocumentSymbols
-fn nested_symbols_to_imenu(symbols: &[DocumentSymbol]) -> Vec<(String, ImenuEntry)> {
+fn nested_symbols_to_imenu(symbols: &[DocumentSymbol]) -> Vec<ImenuDetailedEntry> {
     symbols
         .iter()
-        .flat_map(|sym| {
-            let name = sym.name.clone();
-            let lsp_types::Position { line, character } = sym.range.start;
-            let position_entry = (name.clone(), ImenuEntry::Position((line, character)));
-
-            match &sym.children {
-                Some(children) if !children.is_empty() => {
-                    let children_entries = nested_symbols_to_imenu(&children);
-                    let group_entry = (name.clone(), ImenuEntry::Group(children_entries));
-                    vec![position_entry, group_entry]
-                }
-                _ => vec![position_entry],
-            }
-        })
-        // .map(|sym| {
-        //     let name = sym.name.clone();
-        //     sym.children.as_ref().map_or_else(
-        //         || {
-        //             let lsp_types::Position { line, character } = sym.range.start;
-        //             (name.clone(), ImenuEntry::Position((line, character)))
-        //         },
-        //         |children| {
-        //             if children.is_empty() {
-        //                 let lsp_types::Position { line, character } = sym.range.start;
-        //                 return (name.clone(), ImenuEntry::Position((line, character)));
-        //             } else {
-        //                 let children = nested_symbols_to_imenu(&children);
-        //                 (name.clone(), ImenuEntry::Group(children))
-        //             }
-        //         },
-        //     )
-        // })
+        .map(ImenuDetailedEntry::from)
         .collect()
 }
 
 // Process Flat SymbolInformation
-fn flat_symbols_to_imenu(symbols: &[SymbolInformation]) -> Vec<(String, ImenuEntry)> {
+fn flat_symbols_to_imenu(symbols: &[SymbolInformation]) -> Vec<ImenuDetailedEntry> {
     symbols
         .iter()
-        .map(|sym| {
-            let name = sym.name.clone();
-            let lsp_types::Position { line, character } = sym.location.range.start;
-            (name, ImenuEntry::Position((line, character)))
-        })
+        .map(ImenuDetailedEntry::from)
         .collect()
 }
 
-pub fn sort_imenu_entries_grouped(entries: &mut Vec<(String, ImenuEntry)>) {
-    // Create a temporary structure to hold the grouping information
-    let mut groups: Vec<Vec<(String, ImenuEntry)>> = Vec::new();
-    let mut current_group: Vec<(String, ImenuEntry)> = Vec::new();
-    let mut last_name: Option<String> = None;
+// pub fn sort_imenu_entries_grouped(entries: &mut Vec<ImenuDetailedEntry>) {
+//     // Create a temporary structure to hold the grouping information
+//     let mut groups: Vec<Vec<ImenuDetailedEntry>> = Vec::new();
+//     let mut current_group: Vec<ImenuDetailedEntry> = Vec::new();
+//     let mut last_name: Option<String> = None;
 
-    // First, sort all entries by their positions.
-    entries.sort_by(|a, b| {
-        let pos_a = a.1.get_position();
-        let pos_b = b.1.get_position();
-        pos_a.0.cmp(&pos_b.0).then_with(|| pos_a.1.cmp(&pos_b.1))
-    });
+//     // First, sort all entries by their positions.
+//     entries.sort_by(|a, b| {
+//         let pos_a = a.position;
+//         let pos_b = b.position;
+//         pos_a.0.cmp(&pos_b.0).then_with(|| pos_a.1.cmp(&pos_b.1))
+//     });
 
-    for (name, entry) in entries.drain(..) {
-        match &last_name {
-            Some(last) if last == &name => {
-                // For entries with the same name, add them to the current group.
-                current_group.push((name.clone(), entry));
-            },
-            _ => {
-                // For a new name, save the current group and start a new group
-                if !current_group.is_empty() {
-                    groups.push(current_group);
-                    current_group = Vec::new();
-                }
-                current_group.push((name.clone(), entry));
-                last_name = Some(name);
-            },
-        }
-    }
+//     for entry in entries.drain(..) {
+//         let name = &entry.name;
+//         match &last_name {
+//             Some(last) if last == name => {
+//                 // For entries with the same name, add them to the current group.
+//                 current_group.push(entry);
+//             },
+//             _ => {
+//                 // For a new name, save the current group and start a new group
+//                 if !current_group.is_empty() {
+//                     groups.push(current_group);
+//                     current_group = Vec::new();
+//                 }
+//                 current_group.push(entry);
+//                 last_name = Some(name.clone());
+//             },
+//         }
+//     }
 
-    if !current_group.is_empty() {
-        groups.push(current_group);
-    }
+//     if !current_group.is_empty() {
+//         groups.push(current_group);
+//     }
 
-    for group in groups.iter_mut() {
-        group.sort_by(|a, b| {
-            match (&a.1, &b.1) {
-                (ImenuEntry::Position(_), ImenuEntry::Group(_)) => Ordering::Less,
-                (ImenuEntry::Group(_), ImenuEntry::Position(_)) => Ordering::Greater,
-                _ => Ordering::Equal,
-            }
-        });
+//     for group in groups.iter_mut() {
+//         group.sort_by(|a, b| {
+//             match (&a.1, &b.1) {
+//                 (ImenuEntry::Position(_), ImenuEntry::Group(_)) => Ordering::Less,
+//                 (ImenuEntry::Group(_), ImenuEntry::Position(_)) => Ordering::Greater,
+//                 _ => Ordering::Equal,
+//             }
+//         });
 
-        // Recursively sort the contents within the Group
-        for (_, entry) in group.iter_mut() {
-            if let ImenuEntry::Group(ref mut children) = entry {
-                sort_imenu_entries_grouped(children);
-            }
-        }
-    }
+//         // Recursively sort the contents within the Group
+//         for (_, entry) in group.iter_mut() {
+//             if let ImenuEntry::Group(ref mut children) = entry {
+//                 sort_imenu_entries_grouped(children);
+//             }
+//         }
+//     }
 
-    // Flatten the grouped results back into the original Vec
-    *entries = groups.into_iter().flatten().collect();
-}
+//     // Flatten the grouped results back into the original Vec
+//     *entries = groups.into_iter().flatten().collect();
+// }
